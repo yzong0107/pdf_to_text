@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Keep folder structure; don't commit large PDFs or generated text
+input/*
+!input/README.md
+output/*
+!output/.gitkeep
+
+.rapidocr/
+*.onnx
+.DS_Store
+Thumbs.db
