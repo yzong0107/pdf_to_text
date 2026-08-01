@@ -11,12 +11,13 @@
 - 智能合并视觉换行：正文连成段落，方便复制；章节名等短标题仍单独成行
 - 按页输出 `===== 第 N 页 =====`，便于搜索定位做笔记
 - 支持指定起始页 / 页数，调试大文件不必一次跑完全书
+- **批量转换**：把多个 PDF 放进 `input/`，直接 `python convert.py` 即可
 
 ## 目录结构
 
 ```
 pdf-to-text/
-├── input/             # 放入待转换的 PDF
+├── input/             # 放入待转换的 PDF（可多个）
 ├── output/            # 生成的 .txt
 ├── convert.py         # 命令行入口
 ├── requirements.txt
@@ -47,36 +48,41 @@ pip install -r requirements.txt
 不激活环境也可以直接调用：
 
 ```powershell
-.\.venv\Scripts\python.exe convert.py test.pdf
+.\.venv\Scripts\python.exe convert.py
 ```
 
 ## 用法
 
-1. 将 PDF 放到 `input/`
+1. 将一个或多个 PDF 放到 `input/`
 2. 在项目根目录运行：
 
 ```powershell
 $env:PYTHONUTF8=1   # Windows 下避免控制台中文乱码
 
-# 默认：input/test.pdf → output/test.txt
-python convert.py test.pdf
+# 推荐：转换 input/ 下全部 PDF → output/<同名>.txt
+python convert.py
+
+# 只转指定的一个或多个文件
+python convert.py book1.pdf book2.pdf
 
 # 只转部分页（大文件建议先这样试）
-python convert.py test.pdf --start-page 20 --max-pages 5
+python convert.py --start-page 20 --max-pages 5
 
-# 指定输出文件名（仍写入 output/）
-python convert.py test.pdf -o notes.txt --dpi 200
+# 单文件时可以指定输出名（仍写入 output/）
+python convert.py book.pdf -o notes.txt --dpi 200
 
 # 已有 txt 只想合并换行、不想重新 OCR
-python convert.py --reflow output/test.txt
+python convert.py --reflow output/book.txt
 ```
+
+不必在 README 里再列一遍文件名：只要文件在 `input/` 里，无参数运行就会全部处理。
 
 ### 常用参数
 
 | 参数 | 说明 |
 |------|------|
-| `pdf` | 文件名（在 `input/` 查找）或完整路径 |
-| `-o` / `--output` | 输出路径，默认 `output/<同名>.txt` |
+| `pdfs` | 可选；省略则处理 `input/` 下全部 PDF |
+| `-o` / `--output` | 仅单文件可用；默认 `output/<同名>.txt` |
 | `--dpi` | 渲染分辨率，默认 `200`（更高更清晰也更慢） |
 | `--start-page` | 从第 N 页开始（从 1 计） |
 | `--max-pages` | 最多转换 N 页 |

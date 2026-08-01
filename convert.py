@@ -216,23 +216,55 @@ def convert_pdf(
         doc.close()
 
 
+def list_input_pdfs() -> list[Path]:
+    """All PDF files directly under input/, sorted by name."""
+    if not INPUT_DIR.is_dir():
+        return []
+    return sorted(
+        p for p in INPUT_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"
+    )
+
+
+def collect_pdf_paths(pdf_args: list[Path]) -> list[Path]:
+    """
+    Resolve PDF list:
+    - No args → every *.pdf in input/
+    - One or more args → those files (name looked up under input/ if needed)
+    """
+    if not pdf_args:
+        return list_input_pdfs()
+
+    resolved: list[Path] = []
+    for arg in pdf_args:
+        path = resolve_pdf_path(arg)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"找不到文件 {arg}（已尝试 input/{Path(arg).name}）"
+            )
+        if path.suffix.lower() != ".pdf":
+            raise ValueError(f"输入必须是 PDF 文件，收到 {path}")
+        resolved.append(path)
+    return resolved
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="将 PDF（含中文扫描件）转换为可搜索的纯文本 .txt",
+        description="将 PDF（含中文扫描件）转换为可搜索的纯文本 .txt。"
+        "不传文件名时，自动转换 input/ 下全部 PDF。",
     )
     parser.add_argument(
-        "pdf",
+        "pdfs",
         type=Path,
-        nargs="?",
+        nargs="*",
         default=None,
-        help="输入 PDF：文件名（默认在 input/ 下查找）或完整路径",
+        help="可选：一个或多个 PDF 文件名/路径；省略则处理 input/ 下全部 PDF",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
         default=None,
-        help="输出 .txt 路径（默认：output/<同名>.txt）",
+        help="输出 .txt 路径（仅单文件时可用；默认：output/<同名>.txt）",
     )
     parser.add_argument(
         "--dpi",
@@ -307,21 +339,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"已合并换行：{src} → {out}")
         return 0
 
-    if args.pdf is None:
-        print("错误：请提供 PDF 路径，或使用 --reflow 处理已有 txt", file=sys.stderr)
-        return 1
-
-    pdf_path = resolve_pdf_path(args.pdf)
-
-    if not pdf_path.is_file():
-        print(
-            f"错误：找不到文件 {args.pdf}（已尝试 input/{Path(args.pdf).name}）",
-            file=sys.stderr,
-        )
-        return 1
-    if pdf_path.suffix.lower() != ".pdf":
-        print(f"错误：输入必须是 PDF 文件，收到 {pdf_path}", file=sys.stderr)
-        return 1
     if args.dpi < 72:
         print("错误：--dpi 不能小于 72", file=sys.stderr)
         return 1
@@ -332,28 +349,60 @@ def main(argv: list[str] | None = None) -> int:
         print("错误：--max-pages 至少为 1", file=sys.stderr)
         return 1
 
-    output_path = _resolve_output_arg(args, pdf_path)
-
-    print(f"输入: {pdf_path}")
-    print(f"输出: {output_path}")
-    print(f"DPI:  {args.dpi}")
-    print(f"起始页: {args.start_page}")
-    if args.max_pages:
-        print(f"最多: {args.max_pages} 页")
-
+    pdf_args = list(args.pdfs or [])
     try:
-        pages = convert_pdf(
-            pdf_path,
-            output_path,
-            dpi=args.dpi,
-            start_page=args.start_page,
-            max_pages=args.max_pages,
-        )
-    except ValueError as exc:
+        pdf_paths = collect_pdf_paths(pdf_args)
+    except (FileNotFoundError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
-    print(f"完成：已转换 {pages} 页 → {output_path}")
-    return 0
+
+    if not pdf_paths:
+        print(
+            f"错误：input/ 下没有 PDF。请把文件放入 {INPUT_DIR} 后运行：python convert.py",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.output is not None and len(pdf_paths) > 1:
+        print(
+            "错误：批量转换时不能使用 -o/--output（每个 PDF 会生成同名 .txt）",
+            file=sys.stderr,
+        )
+        return 1
+
+    total_files = len(pdf_paths)
+    print(f"待转换：{total_files} 个 PDF")
+    print(f"DPI: {args.dpi}  起始页: {args.start_page}", end="")
+    if args.max_pages:
+        print(f"  最多: {args.max_pages} 页")
+    else:
+        print()
+
+    failed = 0
+    for idx, pdf_path in enumerate(pdf_paths, start=1):
+        output_path = (
+            _resolve_output_arg(args, pdf_path)
+            if args.output is not None
+            else default_output_path(pdf_path)
+        )
+        print(f"\n[{idx}/{total_files}] {pdf_path.name}")
+        print(f"  → {output_path}")
+        try:
+            pages = convert_pdf(
+                pdf_path,
+                output_path,
+                dpi=args.dpi,
+                start_page=args.start_page,
+                max_pages=args.max_pages,
+            )
+        except Exception as exc:
+            failed += 1
+            print(f"  失败：{exc}", file=sys.stderr)
+            continue
+        print(f"  完成：{pages} 页")
+
+    print(f"\n全部结束：成功 {total_files - failed}/{total_files}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
