@@ -11,6 +11,7 @@
 - 智能合并视觉换行：正文连成段落，方便复制；章节名等短标题仍单独成行
 - 按页输出 `===== 第 N 页 =====`，便于搜索定位做笔记
 - 支持指定起始页 / 页数，调试大文件不必一次跑完全书
+- 支持 `--resume` 断点续跑：中断后从已保存页继续
 - **批量转换**：把多个 PDF 放进 `input/`，直接 `python convert.py` 即可
 
 ## 目录结构
@@ -68,6 +69,9 @@ python convert.py book1.pdf book2.pdf
 # 只转部分页（大文件建议先这样试）
 python convert.py --start-page 20 --max-pages 5
 
+# 断点续跑（上次 Ctrl+C 后继续）
+python convert.py big.pdf --resume
+
 # 单文件时可以指定输出名（仍写入 output/）
 python convert.py book.pdf -o notes.txt --dpi 200
 
@@ -86,6 +90,7 @@ python convert.py --reflow output/book.txt
 | `--dpi` | 渲染分辨率，默认 `200`（更高更清晰也更慢） |
 | `--start-page` | 从第 N 页开始（从 1 计） |
 | `--max-pages` | 最多转换 N 页 |
+| `--resume` | 若输出已存在，则从已保存的最后一页后继续 |
 | `--reflow` | 对已有 `.txt` 做段落合并，不重新 OCR |
 
 ## 输出说明
@@ -96,6 +101,12 @@ python convert.py --reflow output/book.txt
 - 章节名、短标题、页眉类短行会保留换行
 
 OCR 并非 100% 准确（形近字、竖排/复杂版式、低清扫描都可能出错），请以原文核对重要摘录。
+
+## 大文件中断恢复
+
+- 程序现在按页实时写入输出文件，不再等全部页面完成才一次性保存。
+- 转换期间按 `Ctrl+C` 中断时，已完成页面会保留在 `output/*.txt`。
+- 下次用同样命令加 `--resume` 即可从断点继续。
 
 ## 说明
 

@@ -33,6 +33,7 @@ _PAGE_MARKER_RE = re.compile(
     r"^===== 第 \d+ 页 =====\s*$",
     re.MULTILINE,
 )
+_PAGE_MARKER_LINE_RE = re.compile(r"^===== 第 (\d+) 页 =====\s*$")
 _PAGE_NUM_RE = re.compile(r"^\d{1,4}$")
 _HEADING_RE = re.compile(
     r"^("
@@ -187,12 +188,26 @@ def page_to_text(page: fitz.Page, engine: RapidOCR, dpi: int) -> str:
     return ocr_image(engine, image)
 
 
+def _last_saved_page(output_path: Path) -> int:
+    """Return the largest saved page number in output txt (0 if none)."""
+    if not output_path.is_file():
+        return 0
+    last_page = 0
+    with output_path.open("r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            m = _PAGE_MARKER_LINE_RE.match(line.strip())
+            if m:
+                last_page = int(m.group(1))
+    return last_page
+
+
 def convert_pdf(
     pdf_path: Path,
     output_path: Path,
     dpi: int = 200,
     start_page: int = 1,
     max_pages: int | None = None,
+    resume: bool = False,
 ) -> int:
     engine = RapidOCR()
     doc = fitz.open(pdf_path)
@@ -201,17 +216,32 @@ def convert_pdf(
         start_idx = max(0, start_page - 1)
         if start_idx >= total:
             raise ValueError(f"起始页 {start_page} 超出总页数 {total}")
-        end_idx = total if max_pages is None else min(start_idx + max_pages, total)
-        parts: list[str] = []
-
-        for i in tqdm(range(start_idx, end_idx), desc="OCR", unit="page"):
-            page = doc[i]
-            text = page_to_text(page, engine, dpi)
-            parts.append(f"===== 第 {i + 1} 页 =====\n{text}")
-
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
-        return end_idx - start_idx
+        if resume:
+            saved_page = _last_saved_page(output_path)
+            if saved_page > 0:
+                # saved_page is 1-based; next index is exactly saved_page.
+                start_idx = max(start_idx, saved_page)
+
+        end_idx = total if max_pages is None else min(start_idx + max_pages, total)
+        if start_idx >= end_idx:
+            return 0
+
+        file_mode = "a" if (resume and output_path.is_file()) else "w"
+        first_block = not (file_mode == "a" and output_path.stat().st_size > 0)
+
+        processed = 0
+        with output_path.open(file_mode, encoding="utf-8") as out:
+            for i in tqdm(range(start_idx, end_idx), desc="OCR", unit="page"):
+                page = doc[i]
+                text = page_to_text(page, engine, dpi)
+                if not first_block:
+                    out.write("\n")
+                out.write(f"===== 第 {i + 1} 页 =====\n{text}\n")
+                out.flush()
+                first_block = False
+                processed += 1
+        return processed
     finally:
         doc.close()
 
@@ -283,6 +313,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="最多转换 N 页（调试大文件时有用）",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="断点续跑：若输出 txt 已存在，则从已保存的最后一页后继续",
     )
     parser.add_argument(
         "--reflow",
@@ -377,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  最多: {args.max_pages} 页")
     else:
         print()
+    if args.resume:
+        print("已启用断点续跑：存在输出文件时将从上次中断页后继续")
 
     failed = 0
     for idx, pdf_path in enumerate(pdf_paths, start=1):
@@ -388,18 +425,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n[{idx}/{total_files}] {pdf_path.name}")
         print(f"  → {output_path}")
         try:
+            if args.resume and output_path.is_file():
+                saved = _last_saved_page(output_path)
+                if saved > 0:
+                    print(f"  续跑：检测到已保存到第 {saved} 页")
             pages = convert_pdf(
                 pdf_path,
                 output_path,
                 dpi=args.dpi,
                 start_page=args.start_page,
                 max_pages=args.max_pages,
+                resume=args.resume,
             )
+        except KeyboardInterrupt:
+            print("\n  已中断：当前已完成页面已写入输出文件，可用 --resume 继续", file=sys.stderr)
+            failed += 1
+            break
         except Exception as exc:
             failed += 1
             print(f"  失败：{exc}", file=sys.stderr)
             continue
-        print(f"  完成：{pages} 页")
+        if pages == 0:
+            print("  跳过：没有需要新增的页面")
+        else:
+            print(f"  完成：{pages} 页")
 
     print(f"\n全部结束：成功 {total_files - failed}/{total_files}")
     return 1 if failed else 0
